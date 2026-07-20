@@ -1,0 +1,18 @@
+{
+  "name": "langler-e2e-playwright",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "lint": "eslint . && tsc --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@playwright/test": "^1.50.0",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.18.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.20.0"
+  }
+}
