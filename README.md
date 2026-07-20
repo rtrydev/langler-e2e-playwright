@@ -88,15 +88,13 @@ npm test
 The API/Cognito/token endpoints still point at prod, so the same Terraform-sourced credentials and
 `LANGLER_E2E_API_URL`/`LANGLER_E2E_MACHINE_API_URL` apply.
 
-## Workers and pacing are a correctness constraint, not tuning
+## Workers
 
-`playwright.config.ts` runs `workers: 2`. This is deliberate. The human API throttles at burst 10
-/ 5 req/s overall and **burst 5 / 2 req/s on `POST /lessons/import`**, and both Lambdas run with
-reserved concurrency 5. All lesson imports are routed through a single paced helper in `lib/`
-(`PacedQueue`, ~1 import/1.2s per worker) with a 429 backoff, so parallel specs cannot rate-limit
-each other. Raising the worker count risks `429`s on import; do not increase it without re-checking
-those throttles. Machine-token imports additionally respect the per-token 60/min limit — the
-agentic test uses one token per run.
+`playwright.config.ts` runs `workers: 2`. The API's throttle limits (overall burst 50 / 25 req/s,
+burst 25 / 10 on `POST /lessons/import`, reserved concurrency 25) comfortably absorb this suite's
+traffic, so `lib/` issues requests unpaced; a 429 backoff stays in place as a safety net for
+incidental bursts. If you raise the worker count substantially, re-check those throttles. Machine-token
+imports also respect the per-token 60/min limit — the agentic test uses one token per run.
 
 ## Running
 

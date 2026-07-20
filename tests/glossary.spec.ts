@@ -14,7 +14,7 @@ function lessonCountFor(glossary: GlossaryLanguage[], headword: string): number 
 }
 
 test("adds referenced vocab to the glossary on import", async ({ factory, data, page, api }) => {
-  const { doc, vocab } = await factory.glossaryLesson();
+  const { doc, vocab } = await factory.glossaryLesson(0);
   const before = await api.glossary("ja");
 
   await data.importLesson(doc);
@@ -50,7 +50,7 @@ test("removes glossary words when the lesson is deleted (refcount)", async ({
   page,
   api,
 }) => {
-  const { doc, vocab } = await factory.glossaryLesson();
+  const { doc, vocab } = await factory.glossaryLesson(1);
   const before = await api.glossary("ja");
 
   const r = await data.importLesson(doc);

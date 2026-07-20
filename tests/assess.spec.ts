@@ -1,15 +1,12 @@
 import { test, expect } from "../fixtures/test";
 import type { Locator, Page } from "@playwright/test";
 
-// The placement test's OptionCard answers are the only role="button" elements that
-// carry aria-pressed (components/ui/OptionCard.tsx renders `aria-pressed={selected}`,
-// default false). Every other button in the flow is a plain <Button> with no pressed
-// state — the app-shell "Sign out", the intro "Start the placement test", and the
-// ResultScreen "Retake"/"Save & continue" — and the exit control is a role="link".
-// There is NO wrapping region/list/aria-label around the options grid to scope to,
-// so filtering buttons by { pressed: false } isolates the answer options reliably.
+// The answer OptionCards render inside <main>; the app-shell "Sign out" buttons
+// live outside it. A { pressed: false } filter alone also matches "Sign out"
+// (clicking which logs the session out), so scope to <main> — where the only
+// non-pressed buttons on a testing stage are the answer options.
 function answerOptions(page: Page): Locator {
-  return page.getByRole("button", { pressed: false });
+  return page.getByRole("main").getByRole("button", { pressed: false });
 }
 
 const COMPLETION = /Placement complete/;
@@ -36,7 +33,7 @@ test("completes a placement test end to end", async ({ page }) => {
     // A "Checking this round…" status sits between rounds, so neither is present
     // for a moment — the web-first assertion retries, no sleeps needed. Only one
     // of the two ever matches at a time, so strict mode stays happy.
-    await expect(option.or(completion)).toBeVisible();
+    await expect(option.or(completion).first()).toBeVisible();
     if (await completion.isVisible()) break;
     await option.click();
   }

@@ -26,6 +26,10 @@ function base(
   };
 }
 
+function clip(text: string, max = 100): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
 export interface GlossarySeed {
   doc: LessonDoc;
   vocab: VocabEntry[];
@@ -104,7 +108,7 @@ export class LessonFactory {
       referencedVocab: [v[2].id],
       payload: {
         text: `これは{{1}}です。`,
-        blanks: [{ index: 1, answer: v[2].headword, hint: v[2].gloss[0] }],
+        blanks: [{ index: 1, answer: v[2].headword, hint: clip(v[2].gloss[0]) }],
       },
     };
     const matching: Exercise = {
@@ -115,9 +119,9 @@ export class LessonFactory {
       referencedVocab: [v[3].id, v[4].id],
       payload: {
         pairs: [
-          { left: v[3].headword, right: v[3].gloss[0] },
-          { left: v[4].headword, right: v[4].gloss[0] },
-          { left: v[5].headword, right: v[5].gloss[0] },
+          { left: v[3].headword, right: clip(v[3].gloss[0]) },
+          { left: v[4].headword, right: clip(v[4].gloss[0]) },
+          { left: v[5].headword, right: clip(v[5].gloss[0]) },
         ],
       },
     };
@@ -155,7 +159,7 @@ export class LessonFactory {
         annotations: v.slice(0, 2).map((entry) => ({
           surface: entry.headword,
           reading: entry.reading ?? entry.headword,
-          gloss: entry.gloss[0],
+          gloss: clip(entry.gloss[0]),
         })),
         questions: [
           {
@@ -201,7 +205,7 @@ export class LessonFactory {
         items: v.slice(0, 2).map((entry) => ({
           glyph: entry.headword,
           reading: entry.reading ?? entry.headword,
-          meaning: entry.gloss[0],
+          meaning: clip(entry.gloss[0]),
         })),
       },
     };
@@ -219,13 +223,13 @@ export class LessonFactory {
         items: [
           {
             kind: "choice",
-            meaning: v[0].gloss[0],
+            meaning: clip(v[0].gloss[0]),
             options: [v[0].headword, `${v[0].headword}a`],
             answer: v[0].headword,
           },
           {
             kind: "dictation",
-            meaning: v[1].gloss[0],
+            meaning: clip(v[1].gloss[0]),
             answer: v[1].headword,
           },
         ],
@@ -245,7 +249,7 @@ export class LessonFactory {
         items: v.slice(0, 2).map((entry) => ({
           glyph: entry.headword,
           reading: entry.reading ?? entry.headword,
-          meaning: entry.gloss[0],
+          meaning: clip(entry.gloss[0]),
         })),
       },
     };
@@ -257,16 +261,26 @@ export class LessonFactory {
       referencedVocab: [v[0].id, v[1].id],
       payload: {
         pairs: [
-          { left: v[0].headword, right: v[0].gloss[0] },
-          { left: v[1].headword, right: v[1].gloss[0] },
+          { left: v[0].headword, right: clip(v[0].gloss[0]) },
+          { left: v[1].headword, right: clip(v[1].gloss[0]) },
         ],
       },
     };
     return base("my", MY_LEVEL, "foundational", [script, matching]);
   }
 
-  async glossaryLesson(): Promise<GlossarySeed> {
-    const v = await this.pick("ja", JA_LEVEL, 3);
+  // `slot` selects a disjoint window of vocab (past the first ids the other
+  // specs reference), so glossary refcount assertions are isolated from every
+  // other spec and from the sibling glossary test running in parallel.
+  async glossaryLesson(slot = 0): Promise<GlossarySeed> {
+    const all = (await this.api.vocab("ja", { level: JA_LEVEL, limit: 60 })).filter(
+      (entry) => entry.headword && entry.gloss.length > 0,
+    );
+    const offset = 8 + slot * 12;
+    const v = all.slice(offset, offset + 3);
+    if (v.length < 3) {
+      throw new Error(`Reference API returned too few usable ja ${JA_LEVEL} vocab items for slot ${slot}.`);
+    }
     const cloze: Exercise = {
       exerciseId: "cloze-1",
       type: "cloze",

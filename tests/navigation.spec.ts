@@ -40,13 +40,13 @@ test("reaches Connect and Assess from their in-page entry points", async ({ page
 test("presents the viewport-appropriate primary navigation", async ({ page }, testInfo) => {
   await page.goto("/");
 
-  const navs = page.getByRole("navigation", { name: "Primary" });
-  await expect(navs).toHaveCount(2);
+  // getByRole excludes display:none elements from the accessibility tree, so
+  // only the viewport-appropriate nav (sidebar on desktop, bottom bar on
+  // mobile) is present; the other is display:none and never matched.
+  const nav = page.getByRole("navigation", { name: "Primary" });
+  await expect(nav).toHaveCount(1);
 
-  const visible = navs.filter({ visible: true });
-  await expect(visible).toHaveCount(1);
-
-  const box = await visible.boundingBox();
+  const box = await nav.boundingBox();
   const viewport = page.viewportSize();
   if (!box || !viewport) {
     throw new Error("Could not measure the visible navigation.");

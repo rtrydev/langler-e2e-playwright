@@ -22,7 +22,9 @@ test("adds the answer key when the switch is on", async ({ factory, data, page }
 
   await expect(page.getByText("Answer key", { exact: true })).toBeHidden();
 
-  await page.getByRole("switch", { name: "Include answer key" }).click();
+  // Toggle via the switch's visible label; the underlying sr-only input does not
+  // reliably flip under a forced click on WebKit.
+  await page.getByText("Include answer key", { exact: true }).click();
 
   await expect(page.getByText("Answer key", { exact: true })).toBeVisible();
 

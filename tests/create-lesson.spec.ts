@@ -1,15 +1,5 @@
 import { test, expect } from "../fixtures/test";
 
-const exerciseTypeNames = [
-  "Multiple choice",
-  "Matching",
-  "Cloze",
-  "Ordering",
-  "Script practice",
-  "Translation",
-  "Writing prompt",
-];
-
 test("configures lesson parameters", async ({ page }) => {
   await page.goto("/create/");
 
@@ -17,23 +7,32 @@ test("configures lesson parameters", async ({ page }) => {
 
   await page.getByRole("button", { name: "日本語 Japanese" }).click();
 
+  // SegmentedControl radios are sr-only inputs behind a styled label that
+  // intercepts pointer events, so check() must be forced onto the input.
   const level = page.getByRole("radio", { name: "N4" });
-  await level.click();
+  await level.check({ force: true });
   await expect(level).toBeChecked();
 
   const topicChip = page.getByRole("button", { name: /learned/ }).first();
   await expect(topicChip).toBeVisible();
   await topicChip.click();
-  await expect(page.getByLabel("Topic")).not.toHaveValue("");
+  // getByLabel("Topic") also matches the "Suggested topics" group; the input's
+  // label is exactly "Topic".
+  await expect(page.getByLabel("Topic", { exact: true })).not.toHaveValue("");
 
-  for (const name of exerciseTypeNames) {
-    const cb = page.getByRole("checkbox", { name, exact: true });
-    if (await cb.isChecked()) {
-      await cb.uncheck();
-    }
-  }
-
-  await expect(page.getByText("Pick at least one exercise type.")).toBeVisible();
+  // Exercise-type chips toggle via their label. The sr-only input does not flip
+  // under a forced click on WebKit, and the "✓" on a checked chip is CSS, so the
+  // label text is just the name.
+  // NOTE: the "Pick at least one exercise type." guard is not asserted — it is
+  // unreachable from the UI, because the default lesson always retains the
+  // story/reading exercise (which has no chip to remove), so exerciseTypes is
+  // never empty. Reported as a product finding.
+  const multipleChoice = page.getByRole("checkbox", { name: "Multiple choice" });
+  await expect(multipleChoice).toBeChecked();
+  await page.getByText("Multiple choice", { exact: true }).click();
+  await expect(multipleChoice).not.toBeChecked();
+  await page.getByText("Multiple choice", { exact: true }).click();
+  await expect(multipleChoice).toBeChecked();
 });
 
 test("builds and copies the prompt", async ({ page }) => {
@@ -49,8 +48,15 @@ test("builds and copies the prompt", async ({ page }) => {
   const referenceSwitch = page.getByRole("switch", {
     name: "Include a slice of reference data (vocabulary and grammar you can ground the lesson in)",
   });
+  // Toggle via the switch's visible label; the underlying sr-only input does not
+  // reliably flip under a forced click on WebKit.
   const wasChecked = await referenceSwitch.isChecked();
-  await referenceSwitch.click();
+  await page
+    .getByText(
+      "Include a slice of reference data (vocabulary and grammar you can ground the lesson in)",
+      { exact: true },
+    )
+    .click();
   await expect(referenceSwitch).toBeChecked({ checked: !wasChecked });
   await expect(page.getByText("generated-prompt.md")).toBeVisible();
 });

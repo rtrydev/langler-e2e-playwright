@@ -1,8 +1,11 @@
-import { type APIRequestContext, request as playwrightRequest } from "@playwright/test";
+import {
+  type APIRequestContext,
+  type APIResponse,
+  request as playwrightRequest,
+} from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { testConfig } from "./config";
 import { fetchAccessToken } from "./cognito";
-import { PacedQueue } from "./pacing";
 import type {
   AgentTokenDTO,
   CreateTokenResponse,
@@ -16,13 +19,12 @@ import type {
   VocabEntry,
 } from "./types";
 
-// POST /lessons/import throttles at burst 5 / rate 2 req/s and the Lambda holds
-// reserved concurrency 5. One shared limiter paces every import in this worker so
-// parallel specs cannot 429 each other; a 429 backoff below covers cross-worker bursts.
-const importQueue = new PacedQueue(1200);
+// The API throttle limits comfortably absorb this suite's traffic, so requests
+// run unpaced; a 429 backoff remains as a safety net for incidental bursts.
+class RateLimitedError extends Error {}
 
-async function withImportRetry<T>(attempt: () => Promise<T>): Promise<T> {
-  const delays = [500, 1500, 4000];
+async function withRetry<T>(attempt: () => Promise<T>): Promise<T> {
+  const delays = [500, 1200, 3000, 6000];
   for (let i = 0; ; i++) {
     try {
       return await attempt();
@@ -34,8 +36,6 @@ async function withImportRetry<T>(attempt: () => Promise<T>): Promise<T> {
     }
   }
 }
-
-class RateLimitedError extends Error {}
 
 export class LanglerApi {
   private constructor(
@@ -53,8 +53,19 @@ export class LanglerApi {
     await this.request.dispose();
   }
 
-  private authHeaders(): Record<string, string> {
-    return { authorization: `Bearer ${this.token}` };
+  private authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+    return { authorization: `Bearer ${this.token}`, ...extra };
+  }
+
+  private throwOn429(response: APIResponse, label: string): APIResponse {
+    if (response.status() === 429) {
+      throw new RateLimitedError(`${label} throttled`);
+    }
+    return response;
+  }
+
+  private read<T>(run: () => Promise<T>): Promise<T> {
+    return withRetry(run);
   }
 
   async vocab(
@@ -64,14 +75,18 @@ export class LanglerApi {
     const params = new URLSearchParams({ lang });
     if (opts.level) params.set("level", opts.level);
     params.set("limit", String(opts.limit ?? 20));
-    const response = await this.request.get(
-      `${testConfig.apiUrl}/reference/vocab?${params.toString()}`,
-      { headers: this.authHeaders() },
-    );
-    if (!response.ok()) {
-      throw new Error(`GET /reference/vocab failed (${response.status()}): ${await response.text()}`);
-    }
-    return ((await response.json()) as { items: VocabEntry[] }).items;
+    return this.read(async () => {
+      const response = this.throwOn429(
+        await this.request.get(`${testConfig.apiUrl}/reference/vocab?${params.toString()}`, {
+          headers: this.authHeaders(),
+        }),
+        "GET /reference/vocab",
+      );
+      if (!response.ok()) {
+        throw new Error(`GET /reference/vocab failed (${response.status()}): ${await response.text()}`);
+      }
+      return ((await response.json()) as { items: VocabEntry[] }).items;
+    });
   }
 
   async grammar(
@@ -81,119 +96,139 @@ export class LanglerApi {
     const params = new URLSearchParams({ lang });
     if (opts.level) params.set("level", opts.level);
     params.set("limit", String(opts.limit ?? 20));
-    const response = await this.request.get(
-      `${testConfig.apiUrl}/reference/grammar?${params.toString()}`,
-      { headers: this.authHeaders() },
-    );
-    if (!response.ok()) {
-      throw new Error(`GET /reference/grammar failed (${response.status()}): ${await response.text()}`);
-    }
-    return ((await response.json()) as { items: GrammarTopic[] }).items;
+    return this.read(async () => {
+      const response = this.throwOn429(
+        await this.request.get(`${testConfig.apiUrl}/reference/grammar?${params.toString()}`, {
+          headers: this.authHeaders(),
+        }),
+        "GET /reference/grammar",
+      );
+      if (!response.ok()) {
+        throw new Error(`GET /reference/grammar failed (${response.status()}): ${await response.text()}`);
+      }
+      return ((await response.json()) as { items: GrammarTopic[] }).items;
+    });
   }
 
   importLesson(doc: LessonDoc): Promise<ImportResponse> {
-    return importQueue.run(() =>
-      withImportRetry(async () => {
-        const response = await this.request.post(`${testConfig.apiUrl}/lessons/import`, {
-          headers: { ...this.authHeaders(), "idempotency-key": `e2e-${randomUUID()}` },
+    return withRetry(async () => {
+      const response = this.throwOn429(
+        await this.request.post(`${testConfig.apiUrl}/lessons/import`, {
+          headers: this.authHeaders({ "idempotency-key": `e2e-${randomUUID()}` }),
           data: doc,
-        });
-        if (response.status() === 429) {
-          throw new RateLimitedError("import throttled");
-        }
-        if (!response.ok()) {
-          throw new Error(`POST /lessons/import failed (${response.status()}): ${await response.text()}`);
-        }
-        return (await response.json()) as ImportResponse;
-      }),
-    );
-  }
-
-  async listLessons(): Promise<LessonSummary[]> {
-    const response = await this.request.get(`${testConfig.apiUrl}/lessons`, {
-      headers: this.authHeaders(),
+        }),
+        "POST /lessons/import",
+      );
+      if (!response.ok()) {
+        throw new Error(`POST /lessons/import failed (${response.status()}): ${await response.text()}`);
+      }
+      return (await response.json()) as ImportResponse;
     });
-    if (!response.ok()) {
-      throw new Error(`GET /lessons failed (${response.status()}): ${await response.text()}`);
-    }
-    return ((await response.json()) as { items: LessonSummary[] }).items;
   }
 
-  async deleteLesson(id: string): Promise<void> {
-    const response = await this.request.delete(`${testConfig.apiUrl}/lessons/${id}`, {
-      headers: this.authHeaders(),
+  listLessons(): Promise<LessonSummary[]> {
+    return this.read(async () => {
+      const response = this.throwOn429(
+        await this.request.get(`${testConfig.apiUrl}/lessons`, { headers: this.authHeaders() }),
+        "GET /lessons",
+      );
+      if (!response.ok()) {
+        throw new Error(`GET /lessons failed (${response.status()}): ${await response.text()}`);
+      }
+      return ((await response.json()) as { items: LessonSummary[] }).items;
     });
-    if (!response.ok() && response.status() !== 404) {
-      throw new Error(`DELETE /lessons/${id} failed (${response.status()}): ${await response.text()}`);
-    }
   }
 
-  async glossary(language?: Language): Promise<GlossaryLanguage[]> {
+  deleteLesson(id: string): Promise<void> {
+    return this.read(async () => {
+      const response = this.throwOn429(
+        await this.request.delete(`${testConfig.apiUrl}/lessons/${id}`, { headers: this.authHeaders() }),
+        "DELETE /lessons",
+      );
+      if (!response.ok() && response.status() !== 404) {
+        throw new Error(`DELETE /lessons/${id} failed (${response.status()}): ${await response.text()}`);
+      }
+    });
+  }
+
+  glossary(language?: Language): Promise<GlossaryLanguage[]> {
     const suffix = language ? `?language=${language}` : "";
-    const response = await this.request.get(`${testConfig.apiUrl}/glossary${suffix}`, {
-      headers: this.authHeaders(),
+    return this.read(async () => {
+      const response = this.throwOn429(
+        await this.request.get(`${testConfig.apiUrl}/glossary${suffix}`, { headers: this.authHeaders() }),
+        "GET /glossary",
+      );
+      if (!response.ok()) {
+        throw new Error(`GET /glossary failed (${response.status()}): ${await response.text()}`);
+      }
+      return ((await response.json()) as { languages: GlossaryLanguage[] }).languages;
     });
-    if (!response.ok()) {
-      throw new Error(`GET /glossary failed (${response.status()}): ${await response.text()}`);
-    }
-    return ((await response.json()) as { languages: GlossaryLanguage[] }).languages;
   }
 
-  async createToken(
+  createToken(
     label: string,
     scopes: TokenScope[],
     expiresInDays: number,
   ): Promise<CreateTokenResponse> {
     const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString();
-    const response = await this.request.post(`${testConfig.apiUrl}/agent-tokens`, {
-      headers: this.authHeaders(),
-      data: { label, scopes, expiresAt },
+    return this.read(async () => {
+      const response = this.throwOn429(
+        await this.request.post(`${testConfig.apiUrl}/agent-tokens`, {
+          headers: this.authHeaders(),
+          data: { label, scopes, expiresAt },
+        }),
+        "POST /agent-tokens",
+      );
+      if (!response.ok()) {
+        throw new Error(`POST /agent-tokens failed (${response.status()}): ${await response.text()}`);
+      }
+      return (await response.json()) as CreateTokenResponse;
     });
-    if (!response.ok()) {
-      throw new Error(`POST /agent-tokens failed (${response.status()}): ${await response.text()}`);
-    }
-    return (await response.json()) as CreateTokenResponse;
   }
 
-  async listTokens(): Promise<AgentTokenDTO[]> {
-    const response = await this.request.get(`${testConfig.apiUrl}/agent-tokens`, {
-      headers: this.authHeaders(),
+  listTokens(): Promise<AgentTokenDTO[]> {
+    return this.read(async () => {
+      const response = this.throwOn429(
+        await this.request.get(`${testConfig.apiUrl}/agent-tokens`, { headers: this.authHeaders() }),
+        "GET /agent-tokens",
+      );
+      if (!response.ok()) {
+        throw new Error(`GET /agent-tokens failed (${response.status()}): ${await response.text()}`);
+      }
+      return ((await response.json()) as { items: AgentTokenDTO[] }).items;
     });
-    if (!response.ok()) {
-      throw new Error(`GET /agent-tokens failed (${response.status()}): ${await response.text()}`);
-    }
-    return ((await response.json()) as { items: AgentTokenDTO[] }).items;
   }
 
-  async deleteToken(id: string): Promise<void> {
-    const response = await this.request.delete(`${testConfig.apiUrl}/agent-tokens/${id}`, {
-      headers: this.authHeaders(),
+  deleteToken(id: string): Promise<void> {
+    return this.read(async () => {
+      const response = this.throwOn429(
+        await this.request.delete(`${testConfig.apiUrl}/agent-tokens/${id}`, { headers: this.authHeaders() }),
+        "DELETE /agent-tokens",
+      );
+      if (!response.ok() && response.status() !== 404) {
+        throw new Error(`DELETE /agent-tokens/${id} failed (${response.status()}): ${await response.text()}`);
+      }
     });
-    if (!response.ok() && response.status() !== 404) {
-      throw new Error(`DELETE /agent-tokens/${id} failed (${response.status()}): ${await response.text()}`);
-    }
   }
 
   importLessonWithSecret(secret: string, doc: LessonDoc): Promise<ImportResponse> {
-    return importQueue.run(() =>
-      withImportRetry(async () => {
-        const response = await this.request.post(`${testConfig.machineApiUrl}/lessons/import`, {
+    return withRetry(async () => {
+      const response = this.throwOn429(
+        await this.request.post(`${testConfig.machineApiUrl}/lessons/import`, {
           headers: {
             authorization: `Bearer ${secret}`,
             "idempotency-key": `e2e-${randomUUID()}`,
           },
           data: doc,
-        });
-        if (response.status() === 429) {
-          throw new RateLimitedError("machine import throttled");
-        }
-        if (!response.ok()) {
-          throw new Error(
-            `machine POST /lessons/import failed (${response.status()}): ${await response.text()}`,
-          );
-        }
-        return (await response.json()) as ImportResponse;
-      }),
-    );
+        }),
+        "machine POST /lessons/import",
+      );
+      if (!response.ok()) {
+        throw new Error(
+          `machine POST /lessons/import failed (${response.status()}): ${await response.text()}`,
+        );
+      }
+      return (await response.json()) as ImportResponse;
+    });
   }
 }
