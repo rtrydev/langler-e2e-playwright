@@ -6,7 +6,13 @@ fixed and any corrupted data is repaired.
 
 ## BUG-1 — `GET /progress` and lesson-result submission return 500 (SM-2 interval overflow)
 
-**Status:** open (found 2026-07-21, against `langler.rtrydev.com`).
+**Status:** fixed (found 2026-07-21, fixed 2026-07-21 on `langler-backend`
+`fix/srs-interval-overflow`). `Schedule` now caps `IntervalDays` at
+`progress.MaxIntervalDays` (365), and the progress repository clamps an
+unparseable stored `dueDate` to `updatedAt` plus the capped interval instead of
+failing the read, so pre-fix corrupted rows recover and self-heal on their next
+save. The affected E2E account's corrupted rows were removed. The previously
+disabled tests below are re-enabled.
 
 **Symptoms**
 - `GET /progress` → `500 {"error":"internal error"}` for the affected user.
@@ -52,8 +58,7 @@ ERROR msg="progress request failed" method=GET path=/progress
 3. Repair the existing corrupted progress rows for affected users (no delete
    endpoint exists; an owner break-glass DynamoDB edit is required).
 
-**Disabled tests** (revert `test.fixme` → `test` once the fix is deployed and the
-corrupted rows are repaired):
+**Formerly disabled tests** (re-enabled with the fix):
 - `tests/player.spec.ts` → **"plays the auto-graded lesson to a saved result"** —
   the playthrough works, but the final "Your result was saved." step fails
   because the auto-graded fixture references vocab whose progress row has

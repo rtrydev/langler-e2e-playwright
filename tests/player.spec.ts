@@ -8,11 +8,7 @@ async function advance(page: Page, feedback: RegExp | string): Promise<void> {
   await page.getByRole("button", { name: "Next →" }).click();
 }
 
-// Disabled by BUG-1 (docs/known-issues.md): the auto-graded fixture references
-// vocab whose progress row has overflowed, so POST /lessons/{id}/results 500s
-// and "Your result was saved." never appears. Re-enable once the SM-2 interval
-// overflow is fixed and the corrupted rows are repaired.
-test.fixme("plays the auto-graded lesson to a saved result", async ({ page, factory, data }) => {
+test("plays the auto-graded lesson to a saved result", async ({ page, factory, data }) => {
   const doc = await factory.japaneseAutoGraded();
   const r = await data.importLesson(doc);
   await page.goto(`/lessons/play/?id=${r.lessonId}`);
