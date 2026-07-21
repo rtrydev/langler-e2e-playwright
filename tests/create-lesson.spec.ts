@@ -7,10 +7,12 @@ test("configures lesson parameters", async ({ page }) => {
 
   await page.getByRole("button", { name: "日本語 Japanese" }).click();
 
-  // SegmentedControl radios are sr-only inputs behind a styled label that
-  // intercepts pointer events, so check() must be forced onto the input.
+  // SegmentedControl radios are sr-only inputs behind a styled label. Click
+  // the visible segment (the radio's label) instead of force-checking the
+  // clipped input — WebKit does not fire change for a forced click on it.
+  // Scoping by the containing label keeps short level codes unambiguous.
   const level = page.getByRole("radio", { name: "N4" });
-  await level.check({ force: true });
+  await page.locator("label").filter({ has: level }).click();
   await expect(level).toBeChecked();
 
   const topicChip = page.getByRole("button", { name: /learned/ }).first();

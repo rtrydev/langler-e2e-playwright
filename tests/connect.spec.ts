@@ -36,7 +36,9 @@ test("imports a lesson through a UI-created machine token", async ({ page, facto
 
   const importScope = page.getByRole("checkbox", { name: "Import lessons" });
   if (!(await importScope.isChecked())) {
-    await importScope.check();
+    // sr-only ChoiceChip input — toggle via the visible label text, as a
+    // (forced) click on the clipped input does not fire change on WebKit.
+    await page.getByText("Import lessons", { exact: true }).click();
   }
   await expect(importScope).toBeChecked();
 
