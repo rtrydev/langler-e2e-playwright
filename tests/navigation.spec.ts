@@ -18,7 +18,10 @@ test("navigates to every primary destination", async ({ page }) => {
   await page.goto("/");
 
   for (const { name, path, heading } of destinations) {
-    await visiblePrimaryNav(page).getByRole("link", { name, exact: true }).click();
+    // Settings is not in the mobile bottom bar; its link lives in the mobile
+    // header (and in the desktop sidebar), so match it page-wide.
+    const scope = name === "Settings" ? page : visiblePrimaryNav(page);
+    await scope.getByRole("link", { name, exact: true }).filter({ visible: true }).click();
     await expect(page).toHaveURL(new RegExp(`${path.replace(/\//g, "\\/")}?$`));
     if (heading) {
       await expect(page.getByRole("heading", { name: heading })).toBeVisible();

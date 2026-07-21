@@ -34,6 +34,8 @@ test("signs in, keeps the session across reload, and signs out", async ({ page }
   await page.reload();
   await expect(page.getByRole("heading", { name: "Your notebook" })).toBeVisible();
 
+  // Sign out lives in Settings (Account section).
+  await page.goto("/settings/");
   await page.getByRole("button", { name: "Sign out" }).filter({ visible: true }).click();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
